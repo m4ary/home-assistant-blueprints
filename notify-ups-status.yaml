@@ -1,0 +1,43 @@
+blueprint:
+  name: Notify iPhone if UPS is on Battery for 15 Seconds with Name
+  description: >
+    Sends a notification to your iPhone when any UPS sensor remains in the
+    "on battery" state (e.g. "OB") for at least 15 seconds, indicating a power outage.
+    The notification message includes the friendly name of the UPS sensor.
+  domain: automation
+  input:
+    ups_status_entities:
+      name: UPS Status Sensors
+      description: "Select the sensors that monitor your UPS statuses (e.g. sensor.ups1_status, sensor.ups2_status)."
+      selector:
+        entity:
+          domain: sensor
+          multiple: true
+    notify_service:
+      name: iOS Notification Service
+      description: >
+        Enter the notify service entity manually (e.g. notify.mobile_app_msharys_iphone_14_pro)
+        if it does not appear in the dropdown.
+      default: notify.mobile_app_youriphone
+      selector:
+        text: {}
+    battery_indicator:
+      name: Battery Indicator State
+      description: >
+        Enter the exact state value that indicates the UPS is running on battery.
+        For example, use "OB" if that is the state when the UPS is on battery.
+      default: OB
+      selector:
+        text: {}
+
+trigger:
+  platform: state
+  entity_id: !input ups_status_entities
+  to: !input battery_indicator
+  for:
+    seconds: 15
+
+action:
+  - service: !input notify_service
+    data:
+      message: "UPS Alert: Power is out for {{ state_attr(trigger.entity_id, 'friendly_name') }}! Current status: {{ trigger.to_state.state }}"

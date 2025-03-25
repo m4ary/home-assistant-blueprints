@@ -1,0 +1,74 @@
+blueprint:
+  name: Motion-Activated Lights
+  description: >
+    Turns on selected lights when motion is detected, but only if no other lights in that area are on.
+    When the motion sensor goes off, after the configured wait time, it turns off the lights regardless of any conditions.
+  domain: automation
+  input:
+    motion_sensor:
+      name: Motion Sensor
+      description: Binary sensor that detects motion in the area.
+      selector:
+        entity:
+          domain: binary_sensor
+    lights_in_area:
+      name: Lights in Area
+      description: The lights in the area that are checked to ensure no other lights are on.
+      selector:
+        entity:
+          domain: light
+          multiple: true
+    lights_to_turn_on:
+      name: Lights to Turn On
+      description: The lights to activate when motion is detected.
+      selector:
+        entity:
+          domain: light
+          multiple: true
+    wait_time:
+      name: "Wait Time"
+      description: "Time to wait after the motion sensor goes off before turning off devices."
+      default: 120
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+
+trigger:
+  - id: motion_on
+    platform: state
+    entity_id: !input motion_sensor
+    from: "off"
+    to: "on"
+  - id: motion_off
+    platform: state
+    entity_id: !input motion_sensor
+    from: "on"
+    to: "off"
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: motion_on
+        sequence:
+          - condition: state
+            entity_id: !input lights_in_area
+            state: "off"
+          - service: homeassistant.turn_on
+            target:
+              entity_id: !input lights_to_turn_on
+      - conditions:
+          - condition: trigger
+            id: motion_off
+        sequence:
+          - delay:
+              seconds: !input wait_time
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input lights_to_turn_on
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input lights_in_area
+mode: restart
