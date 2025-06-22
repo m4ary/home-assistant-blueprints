@@ -1,0 +1,136 @@
+blueprint:
+  name: Temperature & Motion-Aware Climate Control
+  description: >
+    Turns on selected climate entities in the chosen HVAC mode when the temperature sensor
+    drops below the configured threshold—only if no other climates in the area are already on.
+    When the temperature rises above the threshold, it will
+      1) if motion is currently detected, wait until motion stops,
+      2) then wait the configured off-delay,
+      3) finally turn off both your controlled climates and all area climates.
+  domain: automation
+
+  input:
+    temperature_sensor:
+      name: Temperature Sensor
+      description: Sensor that measures ambient temperature.
+      selector:
+        entity:
+          domain: sensor
+
+    motion_sensor:
+      name: Motion Sensor
+      description: Binary sensor that detects motion activity; prevents immediate shut-off while occupied.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    climates_in_area:
+      name: Climates in Area
+      description: Climate entities in the area that are checked to ensure none are already on.
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+    climates_to_control:
+      name: Climates to Control
+      description: Climate entities to activate when temperature drops below threshold.
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+    hvac_mode:
+      name: HVAC Mode
+      description: Mode to set on your controlled climates when the temperature is low.
+      default: heat
+      selector:
+        select:
+          options:
+            - heat
+            - cool
+            - auto
+            - fan_only
+            - dry
+
+    temperature_threshold:
+      name: Temperature Threshold
+      description: "Temperature (°C) below which climates will turn on, and above which they’ll turn off."
+      default: 20
+      selector:
+        number:
+          unit_of_measurement: °C
+          min: -50
+          max: 50
+
+    wait_time:
+      name: Wait Time
+      description: "Seconds to wait after motion stops (if any) before turning off devices once the temperature is above threshold."
+      default: 300
+      selector:
+        number:
+          unit_of_measurement: seconds
+          min: 0
+          max: 3600
+
+trigger:
+  - id: temp_low
+    platform: numeric_state
+    entity_id: !input temperature_sensor
+    below: !input temperature_threshold
+
+  - id: temp_high
+    platform: numeric_state
+    entity_id: !input temperature_sensor
+    above: !input temperature_threshold
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: temp_low
+        sequence:
+          # Only turn on if all area climates are currently off
+          - condition: and
+            conditions:
+              - condition: state
+                entity_id: !input climates_in_area
+                state: "off"
+
+          # Set your selected climates into the chosen HVAC mode
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input climates_to_control
+            data:
+              hvac_mode: !input hvac_mode
+
+      - conditions:
+          - condition: trigger
+            id: temp_high
+        sequence:
+          # If there’s motion right now, wait until it stops
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: !input motion_sensor
+                    state: "on"
+                sequence:
+                  - wait_for_trigger:
+                      - platform: state
+                        entity_id: !input motion_sensor
+                        to: "off"
+            # whether or not we waited above, now wait the configured off-delay
+          - delay:
+              seconds: !input wait_time
+
+          # Turn off your controlled climates…
+          - service: climate.turn_off
+            target:
+              entity_id: !input climates_to_control
+
+          # …and also turn off all area climates
+          - service: climate.turn_off
+            target:
+              entity_id: !input climates_in_area
+
+mode: restart
