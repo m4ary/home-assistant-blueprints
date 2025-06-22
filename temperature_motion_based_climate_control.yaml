@@ -8,7 +8,6 @@ blueprint:
       2) then wait the configured off-delay,
       3) finally turn off those same climate entities.
   domain: automation
-
   input:
     temperature_sensor:
       name: Temperature Sensor
