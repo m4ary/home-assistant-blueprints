@@ -1,9 +1,9 @@
 blueprint:
-  name: Temp & Motion-Aware Climate Control
+  name: Temp & Motion-Aware Climate Control (Hysteresis)
   description: >
     Turns on the chosen climate entities in the specified HVAC mode when the
-    temperature sensor rises above the threshold—only if those climates are all off.
-    When the temperature falls below the threshold, it will
+    temperature sensor rises above the high threshold—only if those climates are all off.
+    When the temperature falls below the low threshold, it will
       1) if motion is detected, wait until motion stops,
       2) then wait the configured off-delay,
       3) finally turn off those same climate entities.
@@ -45,9 +45,19 @@ blueprint:
             - fan_only
             - dry
 
-    temperature_threshold:
-      name: Temperature Threshold
-      description: "Temperature (°C) above which climates turn on, and below which they turn off."
+    low_temperature_threshold:
+      name: Low Temperature Threshold
+      description: "Temperature (°C) below which climates turn off."
+      default: 22
+      selector:
+        number:
+          unit_of_measurement: °C
+          min: -50
+          max: 50
+
+    high_temperature_threshold:
+      name: High Temperature Threshold
+      description: "Temperature (°C) above which climates turn on."
       default: 25
       selector:
         number:
@@ -57,7 +67,7 @@ blueprint:
 
     wait_time:
       name: Wait Time
-      description: "Seconds to wait after motion stops (if any) before turning off the climates once the temperature is below threshold."
+      description: "Seconds to wait after motion stops (if any) before turning off the climates once the temperature is below low threshold."
       default: 300
       selector:
         number:
@@ -69,12 +79,12 @@ trigger:
   - id: temp_high
     platform: numeric_state
     entity_id: !input temperature_sensor
-    above: !input temperature_threshold
+    above: !input high_temperature_threshold
 
   - id: temp_low
     platform: numeric_state
     entity_id: !input temperature_sensor
-    below: !input temperature_threshold
+    below: !input low_temperature_threshold
 
 action:
   - choose:
