@@ -31,13 +31,12 @@ blueprint:
           max: 120
           unit_of_measurement: minutes
           mode: slider
-    notify_target:
-      name: Notification Target
-      description: Select your mobile device or notification service.
+    notify_service:
+      name: Notification Service
+      description: Enter your notify service (e.g., notify.mobile_app_msharys_iphone_14_pro)
+      default: notify.mobile_app_msharys_iphone_14_pro
       selector:
-        target:
-          entity:
-            domain: notify
+        text:
     message:
       name: Notification Message
       description: The message sent each time.
@@ -62,8 +61,7 @@ action:
           entity_id: !input target_switch
           state: "on"
       sequence:
-        - service: notify.send_message
-          target: !input notify_target
+        - service: !input notify_service
           data:
             message: !input message
             data:
