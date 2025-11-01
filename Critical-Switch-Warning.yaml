@@ -1,0 +1,76 @@
+blueprint:
+  name: Critical Switch Warning
+  description: >
+    Sends repeated critical notifications when a switch remains ON for a defined duration.
+    Useful for safety or energy alerts (e.g., pumps, heaters, fans).
+  domain: automation
+  input:
+    target_switch:
+      name: Target Switch
+      description: The switch to monitor.
+      selector:
+        entity:
+          domain: switch
+    delay_minutes:
+      name: Delay before first alert (minutes)
+      description: How long the switch must stay ON before the first notification.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: minutes
+          mode: slider
+    repeat_interval:
+      name: Repeat interval (minutes)
+      description: How often to resend notifications while the switch remains ON.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: minutes
+          mode: slider
+    notify_target:
+      name: Notification Target
+      description: Select your mobile device or notification service.
+      selector:
+        target:
+          entity:
+            domain: notify
+    message:
+      name: Notification Message
+      description: The message sent each time.
+      default: ⚠️ Critical Alert: {{ target_switch }} has been ON for over {{ delay_minutes }} minutes. Please check immediately.
+      selector:
+        text:
+
+mode: restart
+trigger:
+  - platform: state
+    entity_id: !input target_switch
+    to: "on"
+    for:
+      minutes: !input delay_minutes
+
+condition: []
+
+action:
+  - repeat:
+      while:
+        - condition: state
+          entity_id: !input target_switch
+          state: "on"
+      sequence:
+        - service: notify.send_message
+          target: !input notify_target
+          data:
+            message: !input message
+            data:
+              push:
+                sound:
+                  name: default
+                  critical: 1
+                  volume: 1
+        - delay:
+            minutes: !input repeat_interval
