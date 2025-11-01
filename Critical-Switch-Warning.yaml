@@ -10,8 +10,8 @@ blueprint:
       description: Select one or more switches to monitor.
       selector:
         entity:
-          multiple: true
           domain: switch
+          multiple: true
     delay_minutes:
       name: Delay before first alert (minutes)
       description: How long the switches must stay ON before the first notification.
@@ -24,7 +24,7 @@ blueprint:
           mode: slider
     repeat_interval:
       name: Repeat interval (minutes)
-      description: How often to resend notifications while switches remain ON.
+      description: How often to resend notifications while any selected switch remains ON.
       default: 10
       selector:
         number:
@@ -34,14 +34,14 @@ blueprint:
           mode: slider
     notify_device:
       name: Notification Device
-      description: Select your mobile device to receive notifications.
+      description: Select your iPhone (mobile_app).
       selector:
         device:
           integration: mobile_app
     message:
       name: Notification Message
       description: The message sent each time.
-      default: "⚠️ Critical Alert: One or more switches have been ON for over {{ delay_minutes }} minutes. Please check immediately."
+      default: "⚠️ Critical Alert: One or more switches have been ON for over {{ delay_mins }} minutes. Please check immediately."
       selector:
         text:
 
@@ -57,28 +57,44 @@ trigger:
 condition: []
 
 action:
+  # Expose blueprint inputs as plain variables (so we can use them in templates)
   - variables:
-      switches_on: >
-        {{ expand(!input target_switches) | selectattr('state', 'eq', 'on') | map(attribute='name') | list }}
+      monitored_switches: !input target_switches
+      delay_mins: !input delay_minutes
+      repeat_mins: !input repeat_interval
+      user_message: !input message
+
   - repeat:
       while:
         - condition: template
           value_template: >
-            {{ expand(!input target_switches) | selectattr('state', 'eq', 'on') | list | count > 0 }}
+            {{ expand(monitored_switches)
+               | selectattr('state', 'eq', 'on')
+               | list | length > 0 }}
       sequence:
+        # Recompute which switches are ON each loop
+        - variables:
+            switches_on: >
+              {{ expand(monitored_switches)
+                 | selectattr('state', 'eq', 'on')
+                 | map(attribute='name') | list }}
+
+        # Send to your chosen mobile_app device (e.g., notify.mobile_app_msharys_iphone_14_pro)
         - device_id: !input notify_device
           domain: mobile_app
           type: notify
-          message: >
-            ⚠️ Critical Alert:
-            The following switches have been ON for over {{ delay_minutes }} minutes:
-            {{ switches_on | join(', ') }}
           title: "Critical Switch Warning"
+          message: >
+            {{ user_message }}
+            {% if switches_on|length > 0 %}
+            Affected: {{ switches_on | join(', ') }}
+            {% endif %}
           data:
             push:
               sound:
                 name: default
                 critical: 1
                 volume: 1
+
         - delay:
-            minutes: !input repeat_interval
+            minutes: "{{ repeat_mins }}"
