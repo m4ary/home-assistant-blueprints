@@ -1,19 +1,20 @@
 blueprint:
-  name: Critical Switch Warning
+  name: Critical Switch Warning (Multi-Switch)
   description: >
-    Sends repeated critical notifications when a switch remains ON for a defined duration.
-    Useful for safety or energy alerts (e.g., pumps, heaters, fans).
+    Sends repeated critical notifications when one or more selected switches remain ON
+    for a defined duration. Useful for pumps, fans, or other critical loads.
   domain: automation
   input:
-    target_switch:
-      name: Target Switch
-      description: The switch to monitor.
+    target_switches:
+      name: Target Switches
+      description: Select one or more switches to monitor.
       selector:
         entity:
+          multiple: true
           domain: switch
     delay_minutes:
       name: Delay before first alert (minutes)
-      description: How long the switch must stay ON before the first notification.
+      description: How long the switches must stay ON before the first notification.
       default: 10
       selector:
         number:
@@ -23,7 +24,7 @@ blueprint:
           mode: slider
     repeat_interval:
       name: Repeat interval (minutes)
-      description: How often to resend notifications while the switch remains ON.
+      description: How often to resend notifications while switches remain ON.
       default: 10
       selector:
         number:
@@ -31,23 +32,24 @@ blueprint:
           max: 120
           unit_of_measurement: minutes
           mode: slider
-    notify_service:
-      name: Notification Service
-      description: Enter your notify service (e.g., notify.mobile_app_msharys_iphone_14_pro)
-      default: notify.mobile_app_msharys_iphone_14_pro
+    notify_device:
+      name: Notification Device
+      description: Select your mobile device to receive notifications.
       selector:
-        text:
+        device:
+          integration: mobile_app
     message:
       name: Notification Message
       description: The message sent each time.
-      default: "⚠️ Critical Alert: {{ target_switch }} has been ON for over {{ delay_minutes }} minutes. Please check immediately."
+      default: "⚠️ Critical Alert: One or more switches have been ON for over {{ delay_minutes }} minutes. Please check immediately."
       selector:
         text:
 
 mode: restart
+
 trigger:
   - platform: state
-    entity_id: !input target_switch
+    entity_id: !input target_switches
     to: "on"
     for:
       minutes: !input delay_minutes
@@ -55,20 +57,28 @@ trigger:
 condition: []
 
 action:
+  - variables:
+      switches_on: >
+        {{ expand(!input target_switches) | selectattr('state', 'eq', 'on') | map(attribute='name') | list }}
   - repeat:
       while:
-        - condition: state
-          entity_id: !input target_switch
-          state: "on"
+        - condition: template
+          value_template: >
+            {{ expand(!input target_switches) | selectattr('state', 'eq', 'on') | list | count > 0 }}
       sequence:
-        - service: !input notify_service
+        - device_id: !input notify_device
+          domain: mobile_app
+          type: notify
+          message: >
+            ⚠️ Critical Alert:
+            The following switches have been ON for over {{ delay_minutes }} minutes:
+            {{ switches_on | join(', ') }}
+          title: "Critical Switch Warning"
           data:
-            message: !input message
-            data:
-              push:
-                sound:
-                  name: default
-                  critical: 1
-                  volume: 1
+            push:
+              sound:
+                name: default
+                critical: 1
+                volume: 1
         - delay:
             minutes: !input repeat_interval
