@@ -41,7 +41,7 @@ blueprint:
     message:
       name: Notification Message
       description: The message sent each time.
-      default: ⚠️ Critical Alert: {{ target_switch }} has been ON for over {{ delay_minutes }} minutes. Please check immediately.
+      default: "⚠️ Critical Alert: {{ target_switch }} has been ON for over {{ delay_minutes }} minutes. Please check immediately."
       selector:
         text:
 
