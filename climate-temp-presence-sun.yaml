@@ -1,0 +1,229 @@
+blueprint:
+  name: Climate Control — Temperature, Presence & Sun Aware (Cooling)
+  description: >
+    Maintains a room within a comfortable temperature band by turning a cooling
+    climate device (AC) on and off, while accounting for who's in the room and
+    whether the sun is up.
+
+    While someone is in the room the automation does nothing — you set the
+    temperature yourself. It only takes over once the room is empty.
+
+    When the room is empty, re-evaluated on every relevant change:
+      • Too hot (temp above the sun-adjusted high threshold) → turn cooling ON
+        (overheat protection).
+      • Cool enough (temp below the sun-adjusted low threshold) → turn OFF.
+      • In between → keep maintaining the band while it's before the
+        "maintain until" cutoff time; after that, turn OFF.
+      • When the sun is above the horizon, both thresholds are lowered by the sun
+        offset, so the AC engages sooner and cools a little deeper to counter the
+        extra solar heat gain.
+  domain: automation
+  input:
+    temperature_sensor:
+      name: Temperature Sensor
+      description: Sensor that measures the room's ambient temperature.
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    presence_sensor:
+      name: Presence / Motion Sensor
+      description: Binary sensor that indicates whether someone is in the room.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    occupancy_clear_delay:
+      name: Occupancy Clear Delay
+      description: >
+        How long the room is still treated as occupied after the sensor last
+        went off. Bridges gaps when a motion sensor reads "off" while you're
+        sitting still, so the automation won't take over too soon. e.g. 15 or 30.
+      default: 15
+      selector:
+        number:
+          unit_of_measurement: minutes
+          min: 0
+          max: 120
+          step: 1
+
+    climates_to_control:
+      name: Climate Devices
+      description: The cooling climate entities to turn on/off.
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+    hvac_mode:
+      name: HVAC Mode
+      description: Mode to set when cooling is needed.
+      default: cool
+      selector:
+        select:
+          options:
+            - cool
+            - fan_only
+            - dry
+            - auto
+
+    high_temperature_threshold:
+      name: High Temperature Threshold
+      description: "Temperature (°C) above which cooling turns ON."
+      default: 25
+      selector:
+        number:
+          unit_of_measurement: °C
+          min: 10
+          max: 40
+          step: 0.5
+
+    low_temperature_threshold:
+      name: Low Temperature Threshold
+      description: "Temperature (°C) below which cooling turns OFF. Must be below the high threshold."
+      default: 23
+      selector:
+        number:
+          unit_of_measurement: °C
+          min: 10
+          max: 40
+          step: 0.5
+
+    sun_offset:
+      name: Sun Offset
+      description: >
+        Maximum degrees (°C) to lower both thresholds at peak sun. The actual
+        offset scales with how high the sun is — near zero at sunrise/sunset and
+        the full amount around solar noon. e.g. 1.0 means up to 1° cooler at midday.
+        Set to 0 to ignore the sun.
+      default: 1.0
+      selector:
+        number:
+          unit_of_measurement: °C
+          min: 0
+          max: 5
+          step: 0.5
+
+    full_sun_elevation:
+      name: Full-Sun Elevation
+      description: >
+        Sun elevation angle (degrees above horizon) at which the FULL sun offset
+        applies. Below this the offset scales down linearly to zero at the horizon.
+        ~45–55° suits most mid-latitudes; lower it if your summer sun stays low.
+      default: 50
+      selector:
+        number:
+          unit_of_measurement: °
+          min: 10
+          max: 90
+          step: 1
+
+    maintain_until:
+      name: Maintain Until (cutoff time)
+      description: >
+        Time of day after which the AC stops maintaining the band and turns off
+        (while the room is empty). Before this time the band is maintained.
+        Overheat protection (high threshold) still applies until then.
+      default: "23:00:00"
+      selector:
+        time: {}
+
+trigger:
+  # Temperature crossing a threshold (fires only on the crossing, not every reading).
+  - id: temp_high
+    platform: numeric_state
+    entity_id: !input temperature_sensor
+    above: !input high_temperature_threshold
+  - id: temp_low
+    platform: numeric_state
+    entity_id: !input temperature_sensor
+    below: !input low_temperature_threshold
+  # Sun rising/setting changes the effective thresholds → re-evaluate.
+  - id: sun_change
+    platform: state
+    entity_id: sun.sun
+  # Room considered empty only after the clear delay with no motion.
+  - id: vacated
+    platform: state
+    entity_id: !input presence_sensor
+    to: "off"
+    for:
+      minutes: !input occupancy_clear_delay
+  # Daily cutoff after which an empty room's AC is switched off.
+  - id: cutoff
+    platform: time
+    at: !input maintain_until
+  # Light re-eval so the elevation-scaled offset tracks the sun through the day.
+  - id: periodic
+    platform: time_pattern
+    minutes: "/15"
+
+variables:
+  temp_sensor: !input temperature_sensor
+  presence_sensor: !input presence_sensor
+  climates: !input climates_to_control
+  ac_mode: !input hvac_mode
+  high_t: !input high_temperature_threshold
+  low_t: !input low_temperature_threshold
+  sun_offset: !input sun_offset
+  full_sun_elev: !input full_sun_elevation
+  maintain_until: !input maintain_until
+  clear_delay: !input occupancy_clear_delay
+  # --- derived ---
+  # Sun elevation: <=0° at/below horizon, peaks around solar noon.
+  sun_elev: "{{ state_attr('sun.sun', 'elevation') | float(-90) }}"
+  # Scale 0 (horizon) → 1 (at/above full-sun elevation), clamped.
+  sun_factor: "{{ [[ sun_elev / (full_sun_elev | float(50)), 0] | max, 1] | min }}"
+  offset: "{{ (sun_offset | float(0)) * sun_factor }}"
+  high_adj: "{{ (high_t | float) - offset }}"
+  low_adj: "{{ (low_t | float) - offset }}"
+  temp: "{{ states(temp_sensor) | float('nan') }}"
+  occupied: >
+    {{ is_state(presence_sensor, 'on')
+       or (now() - states[presence_sensor].last_changed).total_seconds()
+          < (clear_delay | float(0) * 60) }}
+  maintaining: "{{ now() < today_at(maintain_until) }}"
+  needs_start: "{{ expand(climates) | selectattr('state', 'ne', ac_mode) | list | count > 0 }}"
+  any_on: "{{ expand(climates) | selectattr('state', 'ne', 'off') | list | count > 0 }}"
+
+condition:
+  # Do nothing while the room is occupied — the occupant sets their own temp.
+  - "{{ not occupied }}"
+  # Bail out if the temperature reading is unavailable/non-numeric.
+  - "{{ temp == temp }}"
+
+action:
+  - choose:
+      # 1) Too hot → ensure cooling is on (overheat protection — always applies).
+      - conditions:
+          - "{{ temp > high_adj }}"
+          - "{{ needs_start }}"
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: "{{ climates }}"
+            data:
+              hvac_mode: "{{ ac_mode }}"
+
+      # 2) Cooled enough → turn off.
+      - conditions:
+          - "{{ temp < low_adj }}"
+          - "{{ any_on }}"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: "{{ climates }}"
+
+      # 3) Mid-band, but room empty AND past cutoff → stop maintaining, turn off.
+      - conditions:
+          - "{{ not maintaining }}"
+          - "{{ any_on }}"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: "{{ climates }}"
+    # else (mid-band while maintaining): hold current state, do nothing.
+
+mode: single
+max_exceeded: silent
