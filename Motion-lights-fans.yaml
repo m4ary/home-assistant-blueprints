@@ -2,15 +2,16 @@ blueprint:
   name: Motion-Activated Lights and Fans
   description: >
     Turns on selected lights and fans when motion is detected, but only if no other lights or fans in that area are on.
-    When the motion sensor goes off, after the configured wait time, it turns off the devices regardless of any conditions.
+    When all motion sensors are off, after the configured wait time, it turns off the devices regardless of any conditions.
   domain: automation
   input:
-    motion_sensor:
-      name: Motion Sensor
-      description: Binary sensor that detects motion in the area.
+    motion_sensors:
+      name: Motion Sensors
+      description: Binary sensors that detect motion in the area.
       selector:
         entity:
           domain: binary_sensor
+          multiple: true
     lights_in_area:
       name: Lights in Area
       description: The lights in the area that are checked to ensure no other lights are on.
@@ -41,7 +42,7 @@ blueprint:
           multiple: true
     wait_time:
       name: "Wait Time"
-      description: "Time to wait after the motion sensor goes off before turning off devices."
+      description: "Time to wait after all motion sensors are off before turning off devices."
       default: 120
       selector:
         number:
@@ -52,12 +53,12 @@ blueprint:
 trigger:
   - id: motion_on
     platform: state
-    entity_id: !input motion_sensor
+    entity_id: !input motion_sensors
     from: "off"
     to: "on"
   - id: motion_off
     platform: state
-    entity_id: !input motion_sensor
+    entity_id: !input motion_sensors
     from: "on"
     to: "off"
 
@@ -87,6 +88,9 @@ action:
         sequence:
           - delay:
               seconds: !input wait_time
+          - condition: state
+            entity_id: !input motion_sensors
+            state: "off"
           - service: homeassistant.turn_off
             target:
               entity_id: !input lights_to_turn_on
