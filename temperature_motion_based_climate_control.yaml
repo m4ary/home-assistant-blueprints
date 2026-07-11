@@ -2,11 +2,15 @@ blueprint:
   name: Temp & Motion-Aware Climate Control (Hysteresis)
   description: >
     Turns on the chosen climate entities in the specified HVAC mode when the
-    temperature sensor rises above the high threshold—only if those climates are all off.
+    temperature sensor rises above the high threshold—only if those climates
+    are all off and the current time is within the allowed window. Optionally
+    applies a target temperature and fan mode, and sends a push notification.
     When the temperature falls below the low threshold, it will
       1) if motion is detected, wait until motion stops,
-      2) then wait the configured off-delay,
-      3) finally turn off those same climate entities.
+      2) then wait the configured off-delay (restarting the wait if motion
+         returns during the delay),
+      3) finally turn off those same climate entities (turning off is allowed
+         at any time of day).
   domain: automation
   input:
     temperature_sensor:
@@ -38,11 +42,37 @@ blueprint:
       selector:
         select:
           options:
-            - heat
             - cool
             - auto
             - fan_only
             - dry
+
+    target_temperature:
+      name: Target Temperature
+      description: "Setpoint (°C) applied to the climates when they turn on."
+      default: 24
+      selector:
+        number:
+          unit_of_measurement: °C
+          min: 7
+          max: 35
+          step: 0.5
+
+    fan_mode:
+      name: Fan Mode (Optional)
+      description: >
+        Fan mode to apply when the climates turn on. Leave empty to keep each
+        device's current fan mode. If your device uses different names
+        (e.g. "Auto", "Quiet"), type them as a custom value.
+      default: ""
+      selector:
+        select:
+          options:
+            - auto
+            - low
+            - medium
+            - high
+          custom_value: true
 
     low_temperature_threshold:
       name: Low Temperature Threshold
@@ -74,6 +104,33 @@ blueprint:
           min: 0
           max: 3600
 
+    time_window_start:
+      name: Allowed Operating Hours — Start
+      description: "Climates may only be turned on after this time. Keep the defaults (00:00:00–23:59:59) to allow turning on all day."
+      default: "00:00:00"
+      selector:
+        time:
+
+    time_window_end:
+      name: Allowed Operating Hours — End
+      description: "Climates may only be turned on before this time. Turning off is never restricted."
+      default: "23:59:59"
+      selector:
+        time:
+
+    notify_device:
+      name: Device to Notify (Optional)
+      description: "Mobile app device that receives a push notification when the climates are turned on or off. Leave empty to disable notifications."
+      default: false
+      selector:
+        device:
+          integration: mobile_app
+
+variables:
+  temperature_sensor: !input temperature_sensor
+  fan_mode: !input fan_mode
+  notify_device: !input notify_device
+
 trigger:
   - id: temp_high
     platform: numeric_state
@@ -91,6 +148,11 @@ action:
           - condition: trigger
             id: temp_high
         sequence:
+          # Only turn on within the allowed operating hours
+          - condition: time
+            after: !input time_window_start
+            before: !input time_window_end
+
           # Only turn on if all controlled climates are currently off
           - condition: state
             entity_id: !input climates_to_control
@@ -103,29 +165,81 @@ action:
             data:
               hvac_mode: !input hvac_mode
 
+          # Apply the setpoint (some units reject this in dry/fan_only mode,
+          # hence continue_on_error)
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climates_to_control
+            data:
+              temperature: !input target_temperature
+            continue_on_error: true
+
+          # Apply the fan mode, if one was chosen
+          - if:
+              - condition: template
+                value_template: "{{ fan_mode not in (none, '') }}"
+            then:
+              - service: climate.set_fan_mode
+                target:
+                  entity_id: !input climates_to_control
+                data:
+                  fan_mode: !input fan_mode
+                continue_on_error: true
+
+          - if:
+              - condition: template
+                value_template: "{{ notify_device not in (false, none, '') }}"
+            then:
+              - domain: mobile_app
+                type: notify
+                device_id: !input notify_device
+                title: "Climate turned on"
+                message: "Temperature reached {{ states(temperature_sensor) }}°C — climate turned on."
+
       - conditions:
           - condition: trigger
             id: temp_low
         sequence:
-          # If motion is active, wait for it to stop
-          - choose:
-              - conditions:
-                  - condition: state
-                    entity_id: !input motion_sensor
-                    state: "on"
-                sequence:
-                  - wait_for_trigger:
-                      - platform: state
-                        entity_id: !input motion_sensor
-                        to: "off"
+          # Nothing to do unless at least one controlled climate is on
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: !input climates_to_control
+                state: "off"
 
-          # Then wait the off-delay
-          - delay:
-              seconds: !input wait_time
+          # Wait until a full off-delay passes with no motion; if motion
+          # returns during the delay, start over
+          - repeat:
+              sequence:
+                - if:
+                    - condition: state
+                      entity_id: !input motion_sensor
+                      state: "on"
+                  then:
+                    - wait_for_trigger:
+                        - platform: state
+                          entity_id: !input motion_sensor
+                          to: "off"
+                - delay:
+                    seconds: !input wait_time
+              until:
+                - condition: state
+                  entity_id: !input motion_sensor
+                  state: "off"
 
           # Finally, turn off the controlled climates
           - service: climate.turn_off
             target:
               entity_id: !input climates_to_control
+
+          - if:
+              - condition: template
+                value_template: "{{ notify_device not in (false, none, '') }}"
+            then:
+              - domain: mobile_app
+                type: notify
+                device_id: !input notify_device
+                title: "Climate turned off"
+                message: "Temperature dropped to {{ states(temperature_sensor) }}°C and the room is clear — climate turned off."
 
 mode: restart
