@@ -130,6 +130,8 @@ variables:
   temperature_sensor: !input temperature_sensor
   fan_mode: !input fan_mode
   notify_device: !input notify_device
+  climates_to_control: !input climates_to_control
+  area: "{{ area_name(climates_to_control | first) or area_name(temperature_sensor) or 'Unknown area' }}"
 
 trigger:
   - id: temp_high
@@ -193,8 +195,8 @@ action:
               - domain: mobile_app
                 type: notify
                 device_id: !input notify_device
-                title: "Climate turned on"
-                message: "Temperature reached {{ states(temperature_sensor) }}°C — climate turned on."
+                title: "{{ area }} — climate turned on"
+                message: "{{ area }} reached {{ states(temperature_sensor) }}°C — climate turned on."
 
       - conditions:
           - condition: trigger
@@ -239,7 +241,7 @@ action:
               - domain: mobile_app
                 type: notify
                 device_id: !input notify_device
-                title: "Climate turned off"
-                message: "Temperature dropped to {{ states(temperature_sensor) }}°C and the room is clear — climate turned off."
+                title: "{{ area }} — climate turned off"
+                message: "{{ area }} dropped to {{ states(temperature_sensor) }}°C and the room is clear — climate turned off."
 
 mode: restart
