@@ -1,31 +1,34 @@
 blueprint:
   name: Temp & Motion-Aware Climate Control (Hysteresis)
   description: >
-    Turns on the chosen climate entities in the specified HVAC mode when the
-    temperature sensor rises above the high threshold—only if those climates
-    are all off and the current time is within the allowed window. Optionally
-    applies a target temperature and fan mode, and sends a push notification.
-    When the temperature falls below the low threshold, it will
-      1) if motion is detected, wait until motion stops,
+    Turns on the chosen climate entities in the specified HVAC mode when any
+    of the temperature sensors rises above the high threshold—only if those
+    climates are all off and the current time is within the allowed window.
+    Optionally applies a target temperature and fan mode, and sends a push
+    notification. When any temperature sensor falls below the low threshold,
+    it will
+      1) if any motion is detected, wait until all motion sensors are clear,
       2) then wait the configured off-delay (restarting the wait if motion
          returns during the delay),
       3) finally turn off those same climate entities (turning off is allowed
          at any time of day).
   domain: automation
   input:
-    temperature_sensor:
-      name: Temperature Sensor
-      description: Sensor that measures ambient temperature.
+    temperature_sensors:
+      name: Temperature Sensors
+      description: Sensors that measure ambient temperature. The automation acts as soon as any one of them crosses a threshold.
       selector:
         entity:
           domain: sensor
+          multiple: true
 
-    motion_sensor:
-      name: Motion Sensor
-      description: Prevents immediate shut-off while occupied.
+    motion_sensors:
+      name: Motion Sensors
+      description: Prevent immediate shut-off while occupied. The area counts as occupied while any sensor reports motion.
       selector:
         entity:
           domain: binary_sensor
+          multiple: true
 
     climates_to_control:
       name: Climates to Control
@@ -96,7 +99,7 @@ blueprint:
 
     wait_time:
       name: Wait Time
-      description: "Seconds to wait after motion stops (if any) before turning off the climates once the temperature is below low threshold."
+      description: "Seconds to wait after all motion stops (if any) before turning off the climates once a temperature sensor is below the low threshold."
       default: 300
       selector:
         number:
@@ -127,21 +130,23 @@ blueprint:
           integration: mobile_app
 
 variables:
-  temperature_sensor: !input temperature_sensor
+  temperature_sensors: !input temperature_sensors
+  motion_sensors: !input motion_sensors
   fan_mode: !input fan_mode
   notify_device: !input notify_device
   climates_to_control: !input climates_to_control
-  area: "{{ area_name(climates_to_control | first) or area_name(temperature_sensor) or 'Unknown area' }}"
+  area: "{{ area_name(climates_to_control | first) or area_name(temperature_sensors | first) or 'Unknown area' }}"
 
 trigger:
+  # Fires when any one of the temperature sensors crosses a threshold
   - id: temp_high
     platform: numeric_state
-    entity_id: !input temperature_sensor
+    entity_id: !input temperature_sensors
     above: !input high_temperature_threshold
 
   - id: temp_low
     platform: numeric_state
-    entity_id: !input temperature_sensor
+    entity_id: !input temperature_sensors
     below: !input low_temperature_threshold
 
 action:
@@ -196,7 +201,7 @@ action:
                 type: notify
                 device_id: !input notify_device
                 title: "{{ area }} — climate turned on"
-                message: "{{ area }} reached {{ states(temperature_sensor) }}°C — climate turned on."
+                message: "{{ area }} reached {{ trigger.to_state.state | float(0) | round(1) }}°C ({{ trigger.to_state.name }}) — climate turned on."
 
       - conditions:
           - condition: trigger
@@ -213,21 +218,13 @@ action:
           # returns during the delay, start over
           - repeat:
               sequence:
-                - if:
-                    - condition: state
-                      entity_id: !input motion_sensor
-                      state: "on"
-                  then:
-                    - wait_for_trigger:
-                        - platform: state
-                          entity_id: !input motion_sensor
-                          to: "off"
+                # Wait until every motion sensor is clear
+                - wait_template: "{{ expand(motion_sensors) | selectattr('state', 'eq', 'on') | list | count == 0 }}"
                 - delay:
                     seconds: !input wait_time
               until:
-                - condition: state
-                  entity_id: !input motion_sensor
-                  state: "off"
+                - condition: template
+                  value_template: "{{ expand(motion_sensors) | selectattr('state', 'eq', 'on') | list | count == 0 }}"
 
           # Finally, turn off the controlled climates
           - service: climate.turn_off
@@ -242,6 +239,6 @@ action:
                 type: notify
                 device_id: !input notify_device
                 title: "{{ area }} — climate turned off"
-                message: "{{ area }} dropped to {{ states(temperature_sensor) }}°C and the room is clear — climate turned off."
+                message: "{{ area }} dropped to {{ trigger.to_state.state | float(0) | round(1) }}°C ({{ trigger.to_state.name }}) and the room is clear — climate turned off."
 
 mode: restart
