@@ -1,0 +1,95 @@
+blueprint:
+  name: Lights on at sunset, off at sunrise (kept off during daytime)
+  description: >
+    Turns the selected lights on at sunset and off at sunrise.
+
+    During daylight, if any of the selected lights is switched on and stays
+    on for the chosen delay, all of them are turned off again.
+
+    At night, manual changes are respected: lights you switch off stay off
+    and lights you switch on stay on until sunrise.
+
+    On Home Assistant start, the lights are turned off if it is daytime.
+  domain: automation
+  author: ""
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    lights:
+      name: Lights
+      description: The outside lights to control.
+      selector:
+        entity:
+          domain: light
+          multiple: true
+    daytime_off_delay:
+      name: Daytime turn-off delay
+      description: >
+        How long a light must stay on during daylight before it is
+        turned off again.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 600
+          step: 1
+          unit_of_measurement: seconds
+          mode: box
+
+triggers:
+  - trigger: sun
+    event: sunset
+    id: dusk
+  - trigger: sun
+    event: sunrise
+    id: dawn
+  - trigger: homeassistant
+    event: start
+    id: enforce_off
+  - trigger: state
+    entity_id: !input lights
+    to: "on"
+    for:
+      seconds: !input daytime_off_delay
+    id: enforce_off
+
+conditions: []
+
+actions:
+  - choose:
+      - alias: Dusk - turn lights on
+        conditions:
+          - condition: trigger
+            id: dusk
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id: !input lights
+
+      - alias: Dawn - turn lights off
+        conditions:
+          - condition: trigger
+            id: dawn
+        sequence:
+          - action: light.turn_off
+            target:
+              entity_id: !input lights
+
+      - alias: Daytime - keep lights off
+        conditions:
+          - condition: trigger
+            id: enforce_off
+          # Uses the computed sunrise/sunset times (same as the sun triggers),
+          # not sun.sun's state, which can lag a few seconds behind the
+          # sunset event and would otherwise switch the lights off right
+          # after they come on.
+          - condition: sun
+            after: sunrise
+            before: sunset
+        sequence:
+          - action: light.turn_off
+            target:
+              entity_id: !input lights
+
+mode: single
+max_exceeded: silent
